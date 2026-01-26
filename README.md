@@ -37,6 +37,15 @@ A sophisticated AI-powered system for analyzing, verifying, and curating article
 - **Cost Tracking**: Real-time token usage and cost estimation
 - **Caching**: 24-hour cache for expensive operations
 
+### Security & Protection
+- **Rate Limiting**: 5 submissions/hour, 20/day (prevents abuse)
+- **URL Validation**: Blocks localhost, private IPs, dangerous protocols
+- **Input Sanitization**: Removes HTML tags, XSS protection, length limits
+- **Email Validation**: Format checking with regex patterns
+- **Real-time Feedback**: Immediate validation errors in UI
+
+See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for complete documentation.
+
 ## 📋 Requirements
 
 ```bash

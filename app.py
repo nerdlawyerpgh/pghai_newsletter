@@ -1,4 +1,4 @@
-# improved_app.py
+
 """
 Streamlined AI Newsletter Article Analysis
 - No sidebar, cleaner UI
@@ -8,8 +8,12 @@ Streamlined AI Newsletter Article Analysis
 
 import json
 import uuid
+import re
+import time
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
+from urllib.parse import urlparse
+from ipaddress import ip_address, IPv4Address, IPv6Address
 
 import streamlit as st
 
@@ -24,6 +28,206 @@ MAX_SOURCES = 5
 MAX_CHARS_EACH = 18000
 AUDIENCE = "Nonprofit AI community: engineers, founders, policy experts, and researchers."
 MISSION = "Accuracy-first AI literacy. Avoid hype. Prioritize evidence and transparency."
+
+# Rate limiting configuration
+MAX_SUBMISSIONS_PER_HOUR = 5
+MAX_SUBMISSIONS_PER_DAY = 20
+
+
+# ============================================================================
+# INPUT SANITIZATION & VALIDATION
+# ============================================================================
+
+def sanitize_text(text: str, max_length: int = 500) -> str:
+    """
+    Sanitize text input to prevent XSS and limit length.
+    
+    Args:
+        text: Raw text input
+        max_length: Maximum allowed length
+        
+    Returns:
+        Sanitized text
+    """
+    if not text:
+        return ""
+    
+    # Remove any HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # Remove potentially dangerous characters
+    text = text.replace('<', '').replace('>', '').replace('"', '').replace("'", '')
+    
+    # Limit length
+    text = text[:max_length].strip()
+    
+    return text
+
+
+def validate_email(email: str) -> bool:
+    """
+    Validate email format.
+    
+    Args:
+        email: Email address to validate
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    if not email:
+        return True  # Email is optional
+    
+    # Basic email regex pattern
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+
+def validate_url(url: str) -> tuple[bool, str]:
+    """
+    Validate URL and check for security issues.
+    
+    Args:
+        url: URL to validate
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not url or not url.strip():
+        return False, "URL is required"
+    
+    url = url.strip()
+    
+    # Check protocol
+    if not url.startswith(('http://', 'https://')):
+        return False, "URL must start with http:// or https://"
+    
+    try:
+        parsed = urlparse(url)
+        
+        # Check for valid scheme
+        if parsed.scheme not in ['http', 'https']:
+            return False, "Only HTTP and HTTPS protocols are allowed"
+        
+        # Check for hostname
+        if not parsed.hostname:
+            return False, "Invalid URL: missing hostname"
+        
+        # Block localhost and private IPs
+        blocked_hosts = [
+            'localhost',
+            '127.0.0.1',
+            '0.0.0.0',
+            '[::]',
+            '[::1]'
+        ]
+        
+        if parsed.hostname.lower() in blocked_hosts:
+            return False, "Cannot analyze localhost URLs"
+        
+        # Check for private IP ranges
+        try:
+            ip = ip_address(parsed.hostname)
+            if ip.is_private or ip.is_loopback or ip.is_reserved:
+                return False, "Cannot analyze private or internal IP addresses"
+        except ValueError:
+            # Not an IP address, which is fine (it's a domain name)
+            pass
+        
+        # Block file:// and other dangerous schemes
+        if parsed.scheme not in ['http', 'https']:
+            return False, "Only HTTP and HTTPS URLs are allowed"
+        
+        # Check URL length
+        if len(url) > 2000:
+            return False, "URL is too long (max 2000 characters)"
+        
+        return True, ""
+        
+    except Exception as e:
+        return False, f"Invalid URL format: {str(e)}"
+
+
+# ============================================================================
+# RATE LIMITING
+# ============================================================================
+
+def init_rate_limit_state():
+    """Initialize rate limiting session state."""
+    if 'submission_times' not in st.session_state:
+        st.session_state.submission_times = []
+
+
+def check_rate_limit() -> tuple[bool, str, int]:
+    """
+    Check if user has exceeded rate limits.
+    
+    Returns:
+        Tuple of (is_allowed, error_message, remaining_submissions)
+    """
+    init_rate_limit_state()
+    
+    current_time = time.time()
+    
+    # Clean up old submissions (older than 24 hours)
+    st.session_state.submission_times = [
+        t for t in st.session_state.submission_times 
+        if current_time - t < 86400  # 24 hours
+    ]
+    
+    # Count recent submissions
+    one_hour_ago = current_time - 3600
+    recent_submissions = [
+        t for t in st.session_state.submission_times 
+        if t > one_hour_ago
+    ]
+    
+    daily_submissions = len(st.session_state.submission_times)
+    hourly_submissions = len(recent_submissions)
+    
+    # Check hourly limit
+    if hourly_submissions >= MAX_SUBMISSIONS_PER_HOUR:
+        time_until_reset = 3600 - (current_time - min(recent_submissions))
+        minutes_remaining = int(time_until_reset / 60)
+        return False, f"Rate limit exceeded. You can submit {MAX_SUBMISSIONS_PER_HOUR} articles per hour. Please wait {minutes_remaining} minutes.", 0
+    
+    # Check daily limit
+    if daily_submissions >= MAX_SUBMISSIONS_PER_DAY:
+        oldest_submission = min(st.session_state.submission_times)
+        time_until_reset = 86400 - (current_time - oldest_submission)
+        hours_remaining = int(time_until_reset / 3600)
+        return False, f"Daily limit reached. You can submit {MAX_SUBMISSIONS_PER_DAY} articles per day. Please wait {hours_remaining} hours.", 0
+    
+    # Calculate remaining submissions
+    remaining_hourly = MAX_SUBMISSIONS_PER_HOUR - hourly_submissions
+    remaining_daily = MAX_SUBMISSIONS_PER_DAY - daily_submissions
+    remaining = min(remaining_hourly, remaining_daily)
+    
+    return True, "", remaining
+
+
+def record_submission():
+    """Record a submission for rate limiting."""
+    init_rate_limit_state()
+    st.session_state.submission_times.append(time.time())
+
+
+def get_rate_limit_info() -> str:
+    """Get current rate limit status as formatted string."""
+    init_rate_limit_state()
+    
+    current_time = time.time()
+    one_hour_ago = current_time - 3600
+    
+    # Clean old entries
+    st.session_state.submission_times = [
+        t for t in st.session_state.submission_times 
+        if current_time - t < 86400
+    ]
+    
+    hourly_count = len([t for t in st.session_state.submission_times if t > one_hour_ago])
+    daily_count = len(st.session_state.submission_times)
+    
+    return f"📊 Usage: {hourly_count}/{MAX_SUBMISSIONS_PER_HOUR} this hour • {daily_count}/{MAX_SUBMISSIONS_PER_DAY} today"
 
 
 def load_prompt(name: str) -> str:
@@ -126,12 +330,14 @@ except:
 # Description
 st.markdown("""
 <div style='background-color: #f0f9ff; padding: 20px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #2dd4bf;'>
+    <h3 style='margin-top: 0; color: #1a1a1a;'>📮 Submit Articles for pgh.ai's Monthly Newsletter</h3>
     <p style='color: #4a5568; line-height: 1.6; margin-bottom: 10px;'>
         This AI-powered verification tool analyzes article claims, verifies cited sources, and assesses credibility 
         to ensure the highest quality content for pgh.ai's AI newsletter readers.
     </p>
     <p style='color: #4a5568; line-height: 1.6; margin-bottom: 0;'>
-        <strong>Want to use system to verify other publications?</strong> A standalone version will be available soon. Contact <a href="mailto:curt@nerdlawyer.ai">Nerd Lawyer</a> 
+        <strong>Want to deploy this system for your own publication?</strong> A standalone version for 
+        licensing will be available soon. Contact <a href="mailto:contact@nerdlawyer.ai">Nerd Lawyer</a> 
         for more information.
     </p>
 </div>
@@ -153,22 +359,50 @@ col1, col2 = st.columns([2, 1], gap="large")
 with col1:
     st.subheader("📝 Submit Article")
     
+    # Rate limit info
+    st.caption(get_rate_limit_info())
+    
     url = st.text_input(
         "Article URL",
         placeholder="https://example.com/article",
         help="Enter the full URL of the article to analyze",
+        max_chars=2000,
     )
+    
+    # Validate URL in real-time
+    url_valid = True
+    url_error = ""
+    if url.strip():
+        url_valid, url_error = validate_url(url.strip())
+        if not url_valid:
+            st.error(f"⚠️ {url_error}")
     
     col_a, col_b = st.columns(2)
     with col_a:
-        submitter_name = st.text_input("Your Name (optional)")
+        submitter_name = st.text_input(
+            "Your Name (optional)",
+            max_chars=100,
+            help="Maximum 100 characters"
+        )
     with col_b:
-        submitter_email = st.text_input("Your Email (optional)")
+        submitter_email = st.text_input(
+            "Your Email (optional)",
+            max_chars=100,
+            help="Maximum 100 characters"
+        )
+    
+    # Validate email in real-time
+    email_valid = True
+    if submitter_email.strip() and not validate_email(submitter_email.strip()):
+        st.error("⚠️ Invalid email format")
+        email_valid = False
     
     submitter_notes = st.text_area(
         "Why are you sharing this? (optional)",
         height=80,
+        max_chars=500,
         placeholder="Context, relevance, or questions you have...",
+        help="Maximum 500 characters"
     )
     
     # LLM Provider (moved to main page)
@@ -179,12 +413,23 @@ with col1:
         help="Choose which LLM to use for analysis",
     )
     
+    # Check rate limit
+    rate_limit_ok, rate_limit_msg, remaining_submissions = check_rate_limit()
+    
+    # Show rate limit warning if close to limit
+    if remaining_submissions <= 2 and remaining_submissions > 0:
+        st.warning(f"⚠️ You have {remaining_submissions} submissions remaining in this period")
+    
     run_btn = st.button(
         "🚀 Run Analysis",
         type="primary",
-        disabled=not bool(url.strip()),
+        disabled=not bool(url.strip()) or not url_valid or not email_valid or not rate_limit_ok,
         use_container_width=True,
     )
+    
+    # Show rate limit error if exceeded
+    if not rate_limit_ok and url.strip():
+        st.error(f"🚫 {rate_limit_msg}")
 
 with col2:
     st.subheader("ℹ️ How It Works")
@@ -209,6 +454,21 @@ with col2:
 
 # Analysis Pipeline
 if run_btn:
+    # Double-check rate limit (in case of race condition)
+    rate_limit_ok, rate_limit_msg, _ = check_rate_limit()
+    if not rate_limit_ok:
+        st.error(f"🚫 {rate_limit_msg}")
+        st.stop()
+    
+    # Record this submission for rate limiting
+    record_submission()
+    
+    # Sanitize all text inputs
+    sanitized_url = url.strip()
+    sanitized_name = sanitize_text(submitter_name.strip(), max_length=100)
+    sanitized_email = sanitize_text(submitter_email.strip(), max_length=100)
+    sanitized_notes = sanitize_text(submitter_notes.strip(), max_length=500)
+    
     article_id = str(uuid.uuid4())
     
     # Initialize card
@@ -217,14 +477,14 @@ if run_btn:
         "article_id": article_id,
         "created_at": now_iso(),
         "metadata": {
-            "url": url.strip(),
+            "url": sanitized_url,
             "title": "",
             "author": "",
             "publisher": "",
             "publish_date": "",
-            "submitter_name": submitter_name.strip(),
-            "submitter_email": submitter_email.strip(),
-            "submitter_notes": submitter_notes.strip(),
+            "submitter_name": sanitized_name,
+            "submitter_email": sanitized_email,
+            "submitter_notes": sanitized_notes,
         },
         "inputs": {
             "audience_description": AUDIENCE,
