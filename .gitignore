@@ -1,2 +1,66 @@
-/.streamlit
+# ----------------------------------
+# Python
+# ----------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# ----------------------------------
+# Streamlit
+# ----------------------------------
+# NEVER commit secrets
+.streamlit/secrets.toml
+
+# Cache / session artifacts
+.streamlit/*.cache
+.streamlit/*.log
+
+# ----------------------------------
+# Environment variables
+# ----------------------------------
+.env
+.env.*
+*.env
+
+# ----------------------------------
+# OS / Editor junk
+# ----------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ----------------------------------
+# Logs
+# ----------------------------------
+*.log
+
+# ----------------------------------
+# Data artifacts (optional but recommended)
+# ----------------------------------
+*.json
+*.csv
+
+# ----------------------------------
+# Temporary / scratch
+# ----------------------------------
+tmp/
+temp/
+.cache/
+
+# ----------------------------------
+# Jupyter (if any)
+# ----------------------------------
+.ipynb_checkpoints/
+
 /V_1
