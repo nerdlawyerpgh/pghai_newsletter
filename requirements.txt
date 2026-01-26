@@ -1,0 +1,23 @@
+# Core dependencies
+streamlit>=1.28.0
+requests>=2.31.0
+python-dateutil>=2.8.2
+
+# Web scraping & extraction
+trafilatura>=1.6.0
+readability-lxml>=0.8.1
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# PDF extraction
+pypdf>=3.17.0
+
+# LLM APIs
+anthropic>=0.34.0
+openai>=1.0.0
+
+# Airtable integration
+# (using requests, no special library needed)
+
+# Optional but recommended
+python-dotenv>=1.0.0  # For local .env files
