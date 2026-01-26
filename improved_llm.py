@@ -1,4 +1,3 @@
-# improved_llm.py
 """
 Enhanced LLM integration with:
 - Multi-provider support (OpenAI, Anthropic)
@@ -9,12 +8,39 @@ Enhanced LLM integration with:
 
 import json
 import time
+import os
 from typing import Dict, Optional, Literal
 import requests
 import streamlit as st
 
 
 LLMProvider = Literal["openai", "anthropic"]
+
+
+def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
+    """
+    Get configuration from environment variables or Streamlit secrets.
+    
+    Args:
+        key: Configuration key
+        default: Default value if not found
+        
+    Returns:
+        Configuration value or default
+    """
+    # Check environment variables first (Render, production)
+    value = os.getenv(key)
+    if value is not None:
+        return value
+    
+    # Fall back to Streamlit secrets (local development)
+    try:
+        if hasattr(st, 'secrets') and key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    
+    return default
 
 
 class LLMError(Exception):
@@ -29,12 +55,12 @@ class LLMClient:
         self.provider = provider
         
         if provider == "openai":
-            self.api_key = st.secrets.get("OPENAI_API_KEY")
-            self.model = st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
+            self.api_key = get_config("OPENAI_API_KEY")
+            self.model = get_config("OPENAI_MODEL", "gpt-4o-mini")
             self.endpoint = "https://api.openai.com/v1/chat/completions"
         elif provider == "anthropic":
-            self.api_key = st.secrets.get("ANTHROPIC_API_KEY")
-            self.model = st.secrets.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+            self.api_key = get_config("ANTHROPIC_API_KEY")
+            self.model = get_config("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             self.endpoint = "https://api.anthropic.com/v1/messages"
         else:
             raise ValueError(f"Unsupported provider: {provider}")
