@@ -822,9 +822,9 @@ RETRIEVED SOURCE PACKETS:
                 
                 try:
                     storage = AirtableStorage(
-                        token=st.secrets["AIRTABLE_TOKEN"],
-                        base_id=st.secrets["AIRTABLE_BASE_ID"],
-                        table_name=st.secrets["AIRTABLE_TABLE_NAME"],
+                        token=get_secret("AIRTABLE_TOKEN"),
+                        base_id=get_secret("AIRTABLE_BASE_ID"),
+                        table_name=get_secret("AIRTABLE_TABLE_NAME"),
                     )
                     saved = storage.upsert_by_article_id(card)
                     st.success(f"✅ Saved to Airtable (Record: {saved.get('id', 'unknown')})")
