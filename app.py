@@ -10,6 +10,7 @@ import json
 import uuid
 import re
 import time
+import os
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
@@ -32,6 +33,41 @@ MISSION = "Accuracy-first AI literacy. Avoid hype. Prioritize evidence and trans
 # Rate limiting configuration
 MAX_SUBMISSIONS_PER_HOUR = 5
 MAX_SUBMISSIONS_PER_DAY = 20
+
+# ============================================================================
+# CONFIGURATION HELPERS
+# ============================================================================
+
+def get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
+    """
+    Get secret from environment variables (Render) or Streamlit secrets (local).
+    
+    Checks in this order:
+    1. Environment variables (for Render deployment)
+    2. Streamlit secrets (for local development)
+    3. Default value
+    
+    Args:
+        key: Secret key to retrieve
+        default: Default value if not found
+        
+    Returns:
+        Secret value or default
+    """
+    # First check environment variables (Render, production)
+    value = os.getenv(key)
+    if value is not None:
+        return value
+    
+    # Fall back to Streamlit secrets (local development)
+    try:
+        if hasattr(st, 'secrets') and key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    
+    # Return default if provided
+    return default
 
 
 # ============================================================================
