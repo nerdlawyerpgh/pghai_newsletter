@@ -266,6 +266,126 @@ def get_rate_limit_info() -> str:
     return f"📊 Usage: {hourly_count}/{MAX_SUBMISSIONS_PER_HOUR} this hour • {daily_count}/{MAX_SUBMISSIONS_PER_DAY} today"
 
 
+def search_external_sources_via_web(
+    article_title: str,
+    key_claims: list,
+    verification_focus: str,
+    llm_client: LLMClient,
+    num_sources_needed: int = 2
+) -> list[tuple[str, int, str]]:
+    """
+    Search for external sources using LLM with web search capability.
+    
+    Args:
+        article_title: Title of the article being verified
+        key_claims: List of key claims from analysis
+        verification_focus: User's specified focus areas
+        llm_client: LLM client with web search capability
+        num_sources_needed: Number of external sources to find
+        
+    Returns:
+        List of tuples: (url, score, source_type)
+        where source_type is 'external'
+    """
+    external_sources = []
+    
+    try:
+        # Build search query based on verification focus or claims
+        if verification_focus and verification_focus.strip():
+            base_query = verification_focus[:80]
+            context = f"focusing on: {verification_focus}"
+        elif key_claims and len(key_claims) > 0:
+            first_claim = key_claims[0] if isinstance(key_claims[0], str) else str(key_claims[0])
+            base_query = first_claim[:80]
+            context = f"related to claim: {first_claim[:60]}"
+        else:
+            base_query = article_title[:80] if article_title else "fact check"
+            context = f"about: {article_title[:60]}"
+        
+        st.caption(f"🔍 Searching for external sources {context}...")
+        
+        # Create search prompt for LLM
+        search_prompt = f"""Find {num_sources_needed} high-quality, authoritative sources to verify claims about: {base_query}
+
+Priority:
+1. Academic papers, research studies
+2. Reputable news organizations
+3. Government/official statistics
+4. Industry reports from established firms
+
+Return ONLY a JSON array of URLs, like:
+["https://example.com/source1", "https://example.com/source2"]"""
+
+        # Call LLM with web search enabled (if using Claude/Anthropic this works automatically)
+        try:
+            # Make a simple call - Claude will use web_search tool if needed
+            result = llm_client.call(
+                system="You are a research assistant finding authoritative sources. Use web search to find the best sources.",
+                user=search_prompt,
+                max_tokens=500,
+                temperature=0.3
+            )
+            
+            response_text = result.get("text", "")
+            
+            # Try to parse URLs from response
+            import re
+            url_pattern = r'https?://[^\s\"\'\)]+(?:[^\s\"\'\)])'
+            found_urls = re.findall(url_pattern, response_text)
+            
+            # Clean and validate URLs
+            for url in found_urls[:num_sources_needed * 2]:
+                url = url.rstrip('.,;:)')
+                if url.startswith('http'):
+                    # Score external sources at 75 (decent but below cited)
+                    external_sources.append((url, 75, 'external'))
+            
+            if external_sources:
+                st.caption(f"✅ Found {len(external_sources)} external sources via search")
+            else:
+                st.caption("⚠️ No external sources found - using cited sources only")
+                
+        except Exception as e:
+            st.caption(f"⚠️ Search unavailable: {str(e)[:50]}")
+            
+    except Exception as e:
+        st.caption(f"⚠️ External search error: {str(e)[:50]}")
+    
+    return external_sources[:num_sources_needed]
+
+
+def validate_api_key(provider: str, api_key: str) -> tuple[bool, str]:
+    """
+    Validate an API key by making a minimal test call.
+    
+    Args:
+        provider: 'openai' or 'anthropic'
+        api_key: API key to validate
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    try:
+        # Try to create client with user key
+        test_client = LLMClient(provider=provider, user_api_key=api_key)
+        
+        # Make minimal test call (shortest possible)
+        test_response = test_client.call(
+            system="You are a helpful assistant.",
+            user="Say 'OK' if you can read this.",
+            max_tokens=10,
+            temperature=0
+        )
+        
+        if test_response and test_response.get("text"):
+            return True, ""
+        else:
+            return False, "API key validation failed - no response received"
+            
+    except Exception as e:
+        return False, f"API key validation error: {str(e)}"
+
+
 def load_prompt(name: str) -> str:
     """Load prompt from file."""
     path = Path(__file__).parent / "prompts" / name
@@ -347,7 +467,7 @@ def build_editor_packet(metadata: dict, analysis: dict, verification: dict) -> d
 
 # Streamlit App
 st.set_page_config(
-    page_title="AI Newsletter Article Analysis",
+    page_title="Nerd Lawyer Article Verifier",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -358,23 +478,17 @@ if "total_tokens" not in st.session_state:
 
 # Header with SVG
 try:
-    st.image("newsletter_header.svg", use_container_width=True)
+    st.image("header-with-logo.svg", use_container_width=True)
 except:
-    st.title("🤖 Newsletter Submission Engine")
-    st.caption("Created by Nerd Lawyer for pgh.ai")
+    st.title("🤖 Nerd Lawyer Article Verifier")
+    st.caption("Created by ")
 
 # Description
 st.markdown("""
 <div style='background-color: #f0f9ff; padding: 20px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #2dd4bf;'>
-    <h3 style='margin-top: 0; color: #1a1a1a;'>📮 Submit Articles for pgh.ai's Monthly Newsletter</h3>
+    <h3 style='margin-top: 0; color: #1a1a1a;'>Verify Your Sources</h3>
     <p style='color: #4a5568; line-height: 1.6; margin-bottom: 10px;'>
-        This AI-powered verification tool analyzes article claims, verifies cited sources, and assesses credibility 
-        to ensure the highest quality content for pgh.ai's AI newsletter readers.
-    </p>
-    <p style='color: #4a5568; line-height: 1.6; margin-bottom: 0;'>
-        <strong>Want to deploy this system for your own publication?</strong> A standalone version for 
-        licensing will be available soon. Contact <a href="mailto:contact@nerdlawyer.ai">Nerd Lawyer</a> 
-        for more information.
+        This AI-powered verification tool analyzes the factual claims made in an article, examines the sources cited in support of those claims, and evaluates overall credibility. By verifying that sources actually exist, are authoritative, and accurately support the statements attributed to them, the tool helps distinguish well-supported reporting from unsupported or misleading assertions. In an era of rapid information sharing and AI-generated content, verifying sources is essential to maintaining trust, accountability, and accuracy. This tool empowers readers, researchers, and professionals to independently confirm claims and rely on information with greater confidence.
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -434,11 +548,12 @@ with col1:
         email_valid = False
     
     submitter_notes = st.text_area(
-        "Why are you sharing this? (optional)",
+        "Are there specific aspects of the article that you would like to verify? (optional)",
         height=80,
         max_chars=500,
-        placeholder="Context, relevance, or questions you have...",
-        help="Maximum 500 characters"
+        placeholder="E.g., 'Verify the statistics about AI adoption' or 'Check claims about company valuations'...",
+        help="Specify particular claims or topics to focus verification on. This will help find more relevant sources.",
+        key="verification_focus"
     )
     
     # LLM Provider (moved to main page)
@@ -448,6 +563,104 @@ with col1:
         index=0,
         help="Choose which LLM to use for analysis",
     )
+    
+    # Number of sources slider
+    st.markdown("**Verification Depth**")
+    num_sources = st.slider(
+        "Number of sources to verify",
+        min_value=3,
+        max_value=10,
+        value=5,
+        step=1,
+        help="More sources = more thorough verification but higher cost. Each source adds ~$0.50-1.00 to the analysis.",
+        key="num_sources_slider"
+    )
+    
+    # Show dynamic pricing estimate
+    base_cost = 2.00  # Base analysis cost
+    per_source_cost = 0.75  # Cost per source
+    estimated_cost = base_cost + (num_sources * per_source_cost)
+    
+    # Apply BYOK discount if active
+    if st.session_state.get('user_api_key'):
+        estimated_cost = estimated_cost * 0.5
+        pricing_text = f"💰 Estimated cost: ~${estimated_cost:.2f} (with your API key - 50% off)"
+    else:
+        pricing_text = f"💵 Estimated cost: ~${estimated_cost:.2f}"
+    
+    st.caption(pricing_text)
+    
+    # Bring Your Own API Key (BYOK) - Optional
+    with st.expander("💰 Use Your Own API Key (Get Discounts!)", expanded=False):
+        st.markdown("""
+        **Save money by using your own API key!**
+        
+        If you provide your own OpenAI or Anthropic API key:
+        - ✅ **50% discount** on all analyses
+        - ✅ Pay only for actual API usage (typically $0.10-0.30 per article)
+        - ✅ No markup - direct API pricing
+        - ✅ Your key, your control
+        
+        **Without your own key:** Standard pricing applies ($3-5 per article)
+        """)
+        
+        use_own_key = st.checkbox("I want to use my own API key", key="use_own_key")
+        
+        user_api_key = None
+        if use_own_key:
+            if llm_provider == "openai":
+                st.info("📝 Get your OpenAI API key at: https://platform.openai.com/api-keys")
+                user_api_key = st.text_input(
+                    "OpenAI API Key",
+                    type="password",
+                    placeholder="sk-proj-...",
+                    help="Your key is never stored - only used for this analysis",
+                    key="user_openai_key"
+                )
+                if user_api_key and not user_api_key.startswith("sk-"):
+                    st.warning("⚠️ OpenAI keys typically start with 'sk-'")
+                    
+            elif llm_provider == "anthropic":
+                st.info("📝 Get your Anthropic API key at: https://console.anthropic.com/settings/keys")
+                user_api_key = st.text_input(
+                    "Anthropic API Key",
+                    type="password",
+                    placeholder="sk-ant-...",
+                    help="Your key is never stored - only used for this analysis",
+                    key="user_anthropic_key"
+                )
+                if user_api_key and not user_api_key.startswith("sk-ant-"):
+                    st.warning("⚠️ Anthropic keys typically start with 'sk-ant-'")
+            
+            # Add validation button
+            if user_api_key:
+                col_val1, col_val2 = st.columns([1, 3])
+                with col_val1:
+                    validate_btn = st.button("🔍 Test Key", key="validate_key_btn")
+                with col_val2:
+                    if validate_btn:
+                        with st.spinner("Testing API key..."):
+                            is_valid, error_msg = validate_api_key(llm_provider, user_api_key)
+                            if is_valid:
+                                st.success("✅ API key is valid!")
+                                st.session_state.key_validated = True
+                            else:
+                                st.error(f"❌ Invalid API key: {error_msg}")
+                                st.session_state.key_validated = False
+                
+                # Show status if previously validated
+                if st.session_state.get('key_validated'):
+                    st.success("✅ Your API key is validated (50% discount applied!)")
+                elif user_api_key and not validate_btn:
+                    st.info("👆 Click 'Test Key' to validate your API key before running analysis")
+            else:
+                st.info("👆 Enter your API key above to activate the discount")
+    
+    # Store user key in session state for use in analysis
+    if 'user_api_key' not in st.session_state or not use_own_key:
+        st.session_state.user_api_key = user_api_key if use_own_key else None
+    else:
+        st.session_state.user_api_key = user_api_key
     
     # Check rate limit
     rate_limit_ok, rate_limit_msg, remaining_submissions = check_rate_limit()
@@ -469,24 +682,37 @@ with col1:
 
 with col2:
     st.subheader("ℹ️ How It Works")
-    st.markdown("""
+    st.markdown(f"""
     1. **Extract** article content & metadata
     2. **Analyze** claims & assess evidence
-    3. **Verify** against cited sources (5 sources, 18k chars each)
+    3. **Verify** against sources ({num_sources} sources: cited + external search)
     4. **Score** confidence with rationale
     5. **Save** results to Airtable
     
     **Current Configuration:**
-    - Sources verified: 5
+    - Sources verified: {num_sources} (📄 cited + 🔍 searched)
     - Content per source: 18,000 chars
-    - LLM: Select below
+    - LLM: {llm_provider.upper()}
+    
+    **💰 Cost Breakdown:**
+    - Base analysis: $2.00
+    - Per source ({num_sources}): ${num_sources * 0.75:.2f}
+    - **Total: ~${2.00 + num_sources * 0.75:.2f}**
+    
+    With your API key: **50% OFF** (~${(2.00 + num_sources * 0.75) * 0.5:.2f})
     """)
     
     # Cost tracking
     total_tokens = st.session_state.get("total_tokens", 0)
     if total_tokens > 0:
         cost = estimate_cost(total_tokens, provider=llm_provider, model="gpt-4o-mini")
-        st.metric("Session Cost", f"${cost:.3f}")
+        
+        # Apply discount if using user's key
+        if st.session_state.get('user_api_key'):
+            discounted_cost = cost * 0.5
+            st.metric("Session Cost", f"${discounted_cost:.3f}", delta=f"-50% (saved ${cost * 0.5:.3f})")
+        else:
+            st.metric("Session Cost", f"${cost:.3f}")
 
 # Analysis Pipeline
 if run_btn:
@@ -509,7 +735,7 @@ if run_btn:
     
     # Initialize card
     card = {
-        "card_version": "1.2",
+        "card_version": "1.3",  # Updated version
         "article_id": article_id,
         "created_at": now_iso(),
         "metadata": {
@@ -520,15 +746,17 @@ if run_btn:
             "publish_date": "",
             "submitter_name": sanitized_name,
             "submitter_email": sanitized_email,
-            "submitter_notes": sanitized_notes,
+            "submitter_notes": sanitized_notes,  # Now contains verification focus
+            "verification_focus": sanitized_notes,  # Explicit field for focus
         },
         "inputs": {
             "audience_description": AUDIENCE,
             "mission_lens": MISSION,
             "llm_provider": llm_provider,
             "external_verification": {
-                "max_sources": MAX_SOURCES,
+                "max_sources": num_sources,  # Dynamic based on slider
                 "max_chars_each": MAX_CHARS_EACH,
+                "verification_focus": sanitized_notes,  # User's focus areas
             },
         },
         "content": {},
@@ -599,7 +827,13 @@ if run_btn:
         with step2_container:
             st.markdown("### 2️⃣ Analyze claims and assess evidence quality")
             with st.spinner("Analyzing..."):
-                llm = LLMClient(provider=llm_provider)
+                # Use user's API key if provided, otherwise use system key
+                user_key = st.session_state.get('user_api_key')
+                llm = LLMClient(provider=llm_provider, user_api_key=user_key)
+                
+                # Show discount message if using own key
+                if user_key:
+                    st.info("💰 Using your API key - 50% discount applied!")
                 
                 analysis_user = f"""
 Audience: {AUDIENCE}
@@ -654,12 +888,12 @@ ARTICLE TEXT:
         
         # Step 3: Gather Cited Sources
         with step3_container:
-            st.markdown("### 3️⃣ Gather and verify cited sources")
-            with st.spinner("Fetching sources..."):
+            st.markdown("### 3️⃣ Gather cited sources and search for external verification")
+            with st.spinner("Fetching cited sources..."):
                 sources_bundle = cached_gather_sources(
                     article_url=url.strip(),
                     article_html=article_html,
-                    max_sources=MAX_SOURCES,
+                    max_sources=num_sources,  # Use slider value
                     max_chars_each=MAX_CHARS_EACH,
                 )
                 
@@ -669,21 +903,66 @@ ARTICLE TEXT:
                 selected = sources_bundle.get("selected_links_with_scores", [])
                 packets = sources_bundle.get("source_packets", [])
                 
+                # Track source types
+                for packet in packets:
+                    if 'source_type' not in packet:
+                        packet['source_type'] = 'cited'  # Mark existing as cited
+                
                 # New statistics
-                successful = sources_bundle.get("successful_sources", 0)
+                successful_cited = sources_bundle.get("successful_sources", 0)
                 paywalled = sources_bundle.get("paywalled_sources", 0)
                 failed = sources_bundle.get("failed_sources", 0)
                 attempted = sources_bundle.get("attempted_count", len(selected))
                 paywall_pct = sources_bundle.get("paywall_percentage", 0)
                 
-                st.success("✅ Source gathering complete")
+                st.success(f"✅ Found {successful_cited} cited sources")
+                
+                # Search for external sources if we need more
+                external_packets = []
+                if successful_cited < num_sources:
+                    num_external_needed = min(num_sources - successful_cited, 3)  # Cap at 3 external
+                    
+                    with st.spinner(f"🔍 Searching for {num_external_needed} external sources..."):
+                        # Get article metadata for search context
+                        article_title = extracted_metadata.get("title", "")
+                        key_claims = analysis.get("key_claims", [])
+                        
+                        # Search for external sources
+                        external_urls = search_external_sources_via_web(
+                            article_title=article_title,
+                            key_claims=key_claims,
+                            verification_focus=sanitized_notes,
+                            llm_client=llm,
+                            num_sources_needed=num_external_needed
+                        )
+                        
+                        # Fetch external sources
+                        if external_urls:
+                            from improved_extraction import fetch_source_text
+                            
+                            for ext_url, score, source_type in external_urls:
+                                packet = fetch_source_text(ext_url, MAX_CHARS_EACH)
+                                packet['source_type'] = source_type  # Mark as 'external'
+                                packet['search_score'] = score
+                                
+                                if packet.get("ok"):
+                                    external_packets.append(packet)
+                                    selected.append((ext_url, score))  # Add to selected list
+                            
+                            st.success(f"✅ Found {len(external_packets)} external sources")
+                        
+                        # Combine all packets
+                        packets.extend(external_packets)
+                
+                # Update statistics
+                successful = successful_cited + len(external_packets)
                 
                 # Display metrics
                 col_a, col_b, col_c = st.columns(3)
                 with col_a:
                     st.metric("Links Found", all_links)
                 with col_b:
-                    st.metric("Sources Verified", f"{successful}/{attempted}")
+                    st.metric("Sources Verified", f"{successful}/{num_sources}")
                 with col_c:
                     paywall_color = "🔴" if paywall_pct > 50 else "🟡" if paywall_pct > 20 else "🟢"
                     st.metric("Paywall Rate", f"{paywall_color} {paywall_pct}%")
@@ -693,7 +972,15 @@ ARTICLE TEXT:
                     st.caption(f"📊 Breakdown: {successful} successful, {paywalled} paywalled, {failed} failed")
                 
                 # List identified sources
-                st.write("**Identified secondary sources:**")
+                # Count source types
+                cited_count = len([p for p in successful_packets if p.get('source_type') == 'cited'])
+                external_count = len([p for p in successful_packets if p.get('source_type') == 'external'])
+                
+                st.write(f"**Identified sources ({successful}/{num_sources} verified):**")
+                if external_count > 0:
+                    st.caption(f"📄 {cited_count} cited in article  •  🔍 {external_count} found via search")
+                else:
+                    st.caption("📄 = Cited in article  •  🔍 = Found via search")
                 
                 # Show successful sources first
                 successful_packets = [p for p in packets if p.get("ok")]
@@ -701,13 +988,17 @@ ARTICLE TEXT:
                 failed_packets = [p for p in packets if not p.get("ok") and not (p.get("paywall_detected") or "paywall" in p.get("reason", "").lower())]
                 
                 count = 1
-                for packet in successful_packets[:MAX_SOURCES]:
+                for packet in successful_packets[:num_sources]:  # Use slider value
                     src_url = packet["url"]
                     display_url = src_url[:60] + "..." if len(src_url) > 60 else src_url
                     
+                    # Get source type and appropriate icon
+                    source_type = packet.get('source_type', 'cited')
+                    icon = "🔍" if source_type == 'external' else "📄"
+                    
                     # Find score
                     score = next((s for u, s in selected if u == src_url), 0)
-                    st.markdown(f"{count}. ✅ [{display_url}]({src_url}) *[score: {score}]*")
+                    st.markdown(f"{count}. {icon} [{display_url}]({src_url}) *[score: {score}]*")
                     count += 1
                 
                 # Show paywalled sources if any
@@ -732,19 +1023,34 @@ ARTICLE TEXT:
         with step4_container:
             st.markdown("### 4️⃣ Verify claims against sources")
             with st.spinner("Verifying..."):
-                verify_user = f"""
-ARTICLE TEXT:
-{extracted_text[:20000]}
-
-EXTRACTED CLAIMS:
-{json.dumps(analysis.get("key_claims", []), ensure_ascii=False, indent=2)}
-
-CLAIM ASSESSMENTS:
-{json.dumps(analysis.get("claim_assessments", []), ensure_ascii=False, indent=2)}
-
-RETRIEVED SOURCE PACKETS:
-{json.dumps(packets, ensure_ascii=False, indent=2)}
-""".strip()
+                # Build verification prompt with optional focus
+                verify_user_parts = [
+                    "ARTICLE TEXT:",
+                    extracted_text[:20000],
+                    "",
+                    "EXTRACTED CLAIMS:",
+                    json.dumps(analysis.get("key_claims", []), ensure_ascii=False, indent=2),
+                    "",
+                    "CLAIM ASSESSMENTS:",
+                    json.dumps(analysis.get("claim_assessments", []), ensure_ascii=False, indent=2),
+                ]
+                
+                # Add verification focus if provided
+                if sanitized_notes.strip():
+                    verify_user_parts.extend([
+                        "",
+                        "USER'S VERIFICATION FOCUS:",
+                        f"The user specifically wants to verify: {sanitized_notes}",
+                        "Pay special attention to sources and claims related to these aspects.",
+                    ])
+                
+                verify_user_parts.extend([
+                    "",
+                    "RETRIEVED SOURCE PACKETS:",
+                    json.dumps(packets, ensure_ascii=False, indent=2)
+                ])
+                
+                verify_user = "\n".join(verify_user_parts).strip()
                 
                 verification = llm.call(VERIFICATION_PROMPT, verify_user, max_tokens=4000)
                 card["verification"] = verification

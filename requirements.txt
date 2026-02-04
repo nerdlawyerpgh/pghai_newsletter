@@ -2,6 +2,9 @@
 streamlit>=1.28.0
 requests>=2.31.0
 python-dateutil>=2.8.2
+supabase>=2.0.0
+stripe>=7.0.0
+pandas>=2.0.0
 
 # Web scraping & extraction
 trafilatura>=1.6.0
@@ -21,3 +24,5 @@ openai>=1.0.0
 
 # Optional but recommended
 python-dotenv>=1.0.0  # For local .env files
+resend>=0.6.0  # For email sending
+slowapi>=0.1.9  # For rate limiting
