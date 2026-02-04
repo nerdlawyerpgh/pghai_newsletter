@@ -1,3 +1,4 @@
+# improved_llm.py
 """
 Enhanced LLM integration with:
 - Multi-provider support (OpenAI, Anthropic)
@@ -51,22 +52,35 @@ class LLMError(Exception):
 class LLMClient:
     """Unified interface for multiple LLM providers."""
     
-    def __init__(self, provider: LLMProvider = "openai"):
+    def __init__(self, provider: LLMProvider = "openai", user_api_key: Optional[str] = None):
+        """
+        Initialize LLM client.
+        
+        Args:
+            provider: LLM provider to use ('openai' or 'anthropic')
+            user_api_key: Optional user-provided API key (for BYOK discount)
+        """
         self.provider = provider
+        self.using_user_key = bool(user_api_key)
         
         if provider == "openai":
-            self.api_key = get_config("OPENAI_API_KEY")
+            # Use user's key if provided, otherwise use system key
+            self.api_key = user_api_key if user_api_key else get_config("OPENAI_API_KEY")
             self.model = get_config("OPENAI_MODEL", "gpt-4o-mini")
             self.endpoint = "https://api.openai.com/v1/chat/completions"
         elif provider == "anthropic":
-            self.api_key = get_config("ANTHROPIC_API_KEY")
+            # Use user's key if provided, otherwise use system key
+            self.api_key = user_api_key if user_api_key else get_config("ANTHROPIC_API_KEY")
             self.model = get_config("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             self.endpoint = "https://api.anthropic.com/v1/messages"
         else:
             raise ValueError(f"Unsupported provider: {provider}")
             
         if not self.api_key:
-            raise LLMError(f"Missing API key for {provider}")
+            if user_api_key:
+                raise LLMError(f"Invalid API key provided for {provider}")
+            else:
+                raise LLMError(f"Missing API key for {provider}")
     
     def call(
         self,
